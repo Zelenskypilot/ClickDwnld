@@ -1,9 +1,9 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
-const ytdlp = require('yt-dlp-exec').exec;
+const ytdl = require('ytdl-core'); // Using ytdl-core
 const fs = require('fs');
 const path = require('path');
-const ffmpeg = require('fluent-ffmpeg');
+const ffmpeg = require('fluent-ffmpeg'); // For audio extraction
 const express = require('express');
 
 const app = express();
@@ -44,15 +44,15 @@ bot.on('message', async (msg) => {
     }
     userRateLimits[chatId]++;
 
-    if (ytdlp.validateURL(text)) {
+    if (ytdl.validateURL(text)) {
         try {
-            const info = await ytdlp(text, { dumpSingleJson: true });
+            const info = await ytdl.getInfo(text); // Get video info using ytdl-core
             userStates[chatId] = { info, url: text };
 
             // Send video details and thumbnail
-            const title = info.title;
-            const thumbnail = info.thumbnail;
-            const description = `Title: ${title}\nDuration: ${info.duration}s`;
+            const title = info.videoDetails.title;
+            const thumbnail = info.videoDetails.thumbnails[0].url;
+            const description = `Title: ${title}\nDuration: ${info.videoDetails.lengthSeconds}s`;
 
             bot.sendPhoto(chatId, thumbnail, {
                 caption: description,
@@ -74,10 +74,10 @@ bot.on('message', async (msg) => {
         // Handle playlist
         try {
             const playlistId = new URL(text).searchParams.get('list');
-            const playlistInfo = await ytdlp(text, { dumpSingleJson: true });
+            const playlistInfo = await ytdl.getBasicInfo(text); // Get basic playlist info
             userStates[chatId] = { playlistInfo, url: text };
 
-            bot.sendMessage(chatId, `Playlist: ${playlistInfo.title}\nTotal videos: ${playlistInfo.entries.length}`, {
+            bot.sendMessage(chatId, `Playlist: ${playlistInfo.videoDetails.title}\nTotal videos: ${playlistInfo.related_videos.length}`, {
                 reply_markup: {
                     inline_keyboard: [
                         [
@@ -103,31 +103,47 @@ bot.on('callback_query', async (query) => {
     const { info, url, playlistInfo } = userStates[chatId];
 
     if (data === 'video') {
-        // Send video format options
-        const formats = info.formats.filter(format => format.vcodec !== 'none' && format.acodec !== 'none');
-        const buttons = formats.map(format => ({
-            text: `${format.format_note || format.ext} - ${format.filesize ? (format.filesize / 1024 / 1024).toFixed(2) + 'MB' : 'Unknown'}`,
-            callback_data: `format_${format.format_id}`
-        }));
+        // Download video
+        const title = info.videoDetails.title.replace(/[^a-zA-Z0-9]/g, '_');
+        const outputFilePath = path.join(downloadDir, `${title}.mp4`);
 
-        bot.sendMessage(chatId, 'Choose a video format:', {
-            reply_markup: {
-                inline_keyboard: [buttons]
-            }
-        });
+        bot.sendMessage(chatId, `Downloading video for "${title}"...`);
+
+        const progressMessage = await bot.sendMessage(chatId, 'Download progress: 0%');
+
+        ytdl(url, { quality: 'highest' })
+            .on('progress', (chunkLength, downloaded, total) => {
+                const percent = ((downloaded / total) * 100).toFixed(2);
+                bot.editMessageText(`Download progress: ${percent}%`, {
+                    chat_id: chatId,
+                    message_id: progressMessage.message_id
+                });
+            })
+            .pipe(fs.createWriteStream(outputFilePath))
+            .on('finish', () => {
+                bot.sendVideo(chatId, outputFilePath)
+                    .then(() => {
+                        fs.unlinkSync(outputFilePath); // Delete the file after sending
+                    })
+                    .catch(err => {
+                        console.error('Error sending video:', err);
+                        bot.sendMessage(chatId, 'Error sending video. Please try again.');
+                    });
+            })
+            .on('error', (err) => {
+                console.error('Error downloading video:', err);
+                bot.sendMessage(chatId, 'Error downloading video. Please try again.');
+            });
     } else if (data === 'audio') {
         // Extract audio
-        const title = info.title.replace(/[^a-zA-Z0-9]/g, '_');
+        const title = info.videoDetails.title.replace(/[^a-zA-Z0-9]/g, '_');
         const outputFilePath = path.join(downloadDir, `${title}.mp3`);
 
         bot.sendMessage(chatId, `Downloading audio for "${title}"...`);
 
-        ytdlp(url, {
-            extractAudio: true,
-            audioFormat: 'mp3',
-            output: outputFilePath
-        })
-            .then(() => {
+        ytdl(url, { filter: 'audioonly', quality: 'highestaudio' })
+            .pipe(fs.createWriteStream(outputFilePath))
+            .on('finish', () => {
                 bot.sendAudio(chatId, outputFilePath)
                     .then(() => {
                         fs.unlinkSync(outputFilePath); // Delete the file after sending
@@ -137,93 +153,30 @@ bot.on('callback_query', async (query) => {
                         bot.sendMessage(chatId, 'Error sending audio. Please try again.');
                     });
             })
-            .catch(err => {
+            .on('error', (err) => {
                 console.error('Error downloading audio:', err);
                 bot.sendMessage(chatId, 'Error downloading audio. Please try again.');
             });
     } else if (data === 'subtitles') {
-        // Download subtitles
-        const title = info.title.replace(/[^a-zA-Z0-9]/g, '_');
-        const subtitles = info.subtitles;
-
-        if (subtitles && subtitles.length > 0) {
-            const subtitle = subtitles[0];
-            const outputFilePath = path.join(downloadDir, `${title}.${subtitle.ext}`);
-
-            bot.sendMessage(chatId, `Downloading subtitles for "${title}"...`);
-
-            fs.writeFileSync(outputFilePath, subtitle.url);
-            bot.sendDocument(chatId, outputFilePath)
-                .then(() => {
-                    fs.unlinkSync(outputFilePath); // Delete the file after sending
-                })
-                .catch(err => {
-                    console.error('Error sending subtitles:', err);
-                    bot.sendMessage(chatId, 'Error sending subtitles. Please try again.');
-                });
-        } else {
-            bot.sendMessage(chatId, 'No subtitles available for this video.');
-        }
-    } else if (data.startsWith('format_')) {
-        // Download selected video format
-        const formatId = data.split('_')[1];
-        const format = info.formats.find(f => f.format_id === formatId);
-
-        if (format) {
-            const title = info.title.replace(/[^a-zA-Z0-9]/g, '_');
-            const outputFilePath = path.join(downloadDir, `${title}.${format.ext}`);
-
-            bot.sendMessage(chatId, `Downloading "${title}" in ${format.format_note || format.ext}...`);
-
-            const progressMessage = await bot.sendMessage(chatId, 'Download progress: 0%');
-
-            ytdlp(url, {
-                format: formatId,
-                output: outputFilePath
-            })
-                .on('progress', (progress) => {
-                    const percent = (progress.percent || 0).toFixed(2);
-                    bot.editMessageText(`Download progress: ${percent}%`, {
-                        chat_id: chatId,
-                        message_id: progressMessage.message_id
-                    });
-                })
-                .then(() => {
-                    bot.sendDocument(chatId, outputFilePath)
-                        .then(() => {
-                            fs.unlinkSync(outputFilePath); // Delete the file after sending
-                        })
-                        .catch(err => {
-                            console.error('Error sending file:', err);
-                            bot.sendMessage(chatId, 'Error sending file. Please try again.');
-                        });
-                })
-                .catch(err => {
-                    console.error('Error downloading video:', err);
-                    bot.sendMessage(chatId, 'Error downloading video. Please try again.');
-                });
-        } else {
-            bot.sendMessage(chatId, 'Invalid format selected. Please try again.');
-        }
+        // Download subtitles (not natively supported by ytdl-core)
+        bot.sendMessage(chatId, 'Subtitle download is not supported with ytdl-core. Please use yt-dlp for this feature.');
     } else if (data === 'playlist_video' || data === 'playlist_audio') {
         // Download entire playlist
         const isAudio = data === 'playlist_audio';
-        const totalVideos = playlistInfo.entries.length;
+        const totalVideos = playlistInfo.related_videos.length;
 
         bot.sendMessage(chatId, `Downloading ${totalVideos} ${isAudio ? 'audio files' : 'videos'}...`);
 
         for (let i = 0; i < totalVideos; i++) {
-            const video = playlistInfo.entries[i];
+            const video = playlistInfo.related_videos[i];
+            const videoUrl = `https://www.youtube.com/watch?v=${video.id}`;
             const title = video.title.replace(/[^a-zA-Z0-9]/g, '_');
             const outputFilePath = path.join(downloadDir, `${title}.${isAudio ? 'mp3' : 'mp4'}`);
 
             if (isAudio) {
-                ytdlp(video.url, {
-                    extractAudio: true,
-                    audioFormat: 'mp3',
-                    output: outputFilePath
-                })
-                    .then(() => {
+                ytdl(videoUrl, { filter: 'audioonly', quality: 'highestaudio' })
+                    .pipe(fs.createWriteStream(outputFilePath))
+                    .on('finish', () => {
                         bot.sendAudio(chatId, outputFilePath)
                             .then(() => {
                                 fs.unlinkSync(outputFilePath); // Delete the file after sending
@@ -233,12 +186,10 @@ bot.on('callback_query', async (query) => {
                             });
                     });
             } else {
-                ytdlp(video.url, {
-                    format: 'best',
-                    output: outputFilePath
-                })
-                    .then(() => {
-                        bot.sendDocument(chatId, outputFilePath)
+                ytdl(videoUrl, { quality: 'highest' })
+                    .pipe(fs.createWriteStream(outputFilePath))
+                    .on('finish', () => {
+                        bot.sendVideo(chatId, outputFilePath)
                             .then(() => {
                                 fs.unlinkSync(outputFilePath); // Delete the file after sending
                             })

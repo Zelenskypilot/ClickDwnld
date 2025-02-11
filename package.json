@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node bot.js",
+    "start": "node index.js",
     "stop": "pkill -f node"
   },
   "author": "Niklas <dev@corusm.de>",
@@ -13,7 +13,7 @@
   "dependencies": {
     "telegraf": "^3.25.5",
     "winston": "^3.1.0",
-    "yt-dlp-core": "^1.0.0",
+    "ytdl-core": "^4.11.5",
     "dotenv": "^16.0.0"
   }
 }

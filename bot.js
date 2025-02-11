@@ -1,7 +1,7 @@
 // Modules
 const Telegraf = require('telegraf');
 const fs = require('fs');
-const youtubedl = require('youtube-dl');
+const youtubedl = require('youtube-dl-exec');
 const winston = require('winston');
 require('dotenv').config(); // Load environment variables from .env
 
@@ -59,63 +59,42 @@ bot.command('/video', async (ctx) => {
         // Temporary file path
         const tempFilePath = `${__dirname}/${userID}_temp.mp4`;
 
-        // Download video
-        const video = youtubedl(videoURL, ['--format=18'], { cwd: __dirname });
-
-        // Will be called when the download starts.
-        video.on('info', (info) => {
-            infor = info;
-            videosize = infor.size / 1000000;
-
-            if (videosize < TeleMaxData) {
-                ctx.reply('Download Started');
-                video.pipe(fs.createWriteStream(tempFilePath));
-
-                // Status of Download
-                /* UNCOMMENT FOR DOWNLOAD STATUS IN TERMINAL
-                let pos = 0;
-                video.on('data', (chunk) => {
-                    pos += chunk.length;
-                    if (infor.size) {
-                        const percent = (pos / infor.size * 100).toFixed(2);
-                        process.stdout.cursorTo(0);
-                        process.stdout.clearLine(1);
-                        process.stdout.write(percent + '%');
-                    }
-                });
-                */
-
-                video.on('end', async () => {
-                    logger.log("info", "Download completed");
-                    try {
-                        ctx.reply(`Download completed!\nVideo gets sent! - This might take a few seconds! \n \n Title: \n ${infor.title}. It's ${videosize}mb big.`);
-                        logger.log('info', `Video gets sent! - This might take a few seconds! \n Title: ${infor.title}, Size: ${videosize}`);
-
-                        // Send the video
-                        await ctx.replyWithVideo({
-                            source: fs.createReadStream(tempFilePath)
-                        });
-
-                        // Delete the video immediately after sending
-                        fs.unlink(tempFilePath, (err) => {
-                            if (err) {
-                                logger.log('info', `Error deleting file: ${err}`);
-                            } else {
-                                logger.log('info', `File deleted: ${tempFilePath}`);
-                            }
-                        });
-                    } catch (err) {
-                        logger.log("info", "Error: sendVideo");
-                        ctx.reply('Error: sendVideo');
-                    }
-                });
-            } else {
-                ctx.reply(`The video is ${videosize}mb. The maximum size for sending videos from Telegram is ${TeleMaxData}mb.`);
-                logger.log('info', `The video size is too big! (${videosize}mb)`);
-            }
+        // Download video using youtube-dl-exec
+        const result = await youtubedl(videoURL, {
+            format: 'mp4',
+            output: tempFilePath,
         });
+
+        // Get video info
+        const info = await youtubedl(videoURL, { dumpSingleJson: true });
+        infor = info;
+        videosize = info.filesize / 1000000;
+
+        if (videosize < TeleMaxData) {
+            ctx.reply('Download Started');
+
+            // Send the video
+            await ctx.replyWithVideo({
+                source: fs.createReadStream(tempFilePath)
+            });
+
+            // Delete the video immediately after sending
+            fs.unlink(tempFilePath, (err) => {
+                if (err) {
+                    logger.log('info', `Error deleting file: ${err}`);
+                } else {
+                    logger.log('info', `File deleted: ${tempFilePath}`);
+                }
+            });
+
+            ctx.reply(`Download completed!\nVideo sent! \n \n Title: \n ${infor.title}. It's ${videosize}mb big.`);
+            logger.log('info', `Video sent! \n Title: ${infor.title}, Size: ${videosize}`);
+        } else {
+            ctx.reply(`The video is ${videosize}mb. The maximum size for sending videos from Telegram is ${TeleMaxData}mb.`);
+            logger.log('info', `The video size is too big! (${videosize}mb)`);
+        }
     } catch (err) {
         ctx.reply("ERROR");
-        logger.log("info", "error");
+        logger.log("info", `Error: ${err}`);
     }
 });

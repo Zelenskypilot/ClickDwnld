@@ -1,0 +1,32 @@
+{
+  "name": "dwnld-bot",
+  "version": "1.0.0",
+  "description": "An advanced Telegram bot named Dwnld.",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "nodemon bot.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "telegram",
+    "youtube",
+    "downloader",
+    "bot",
+    "nodejs",
+    "yt-dlp",
+    "dwnld"
+  ],
+  "author": "Jexx",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "fluent-ffmpeg": "^2.1.2",
+    "node-telegram-bot-api": "^0.61.0",
+    "yt-dlp-exec": "^2.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

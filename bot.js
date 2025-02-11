@@ -1,7 +1,7 @@
 // Modules
 const Telegraf = require('telegraf');
 const fs = require('fs');
-const youtubedl = require('youtube-dl-exec');
+const ytdlp = require('yt-dlp-core').YtDlp;
 const winston = require('winston');
 require('dotenv').config(); // Load environment variables from .env
 
@@ -59,19 +59,22 @@ bot.command('/video', async (ctx) => {
         // Temporary file path
         const tempFilePath = `${__dirname}/${userID}_temp.mp4`;
 
-        // Download video using youtube-dl-exec
-        const result = await youtubedl(videoURL, {
-            format: 'mp4',
+        // Download video using yt-dlp-core
+        const ytdl = new ytdlp(videoURL, {
             output: tempFilePath,
+            format: 'mp4',
         });
 
         // Get video info
-        const info = await youtubedl(videoURL, { dumpSingleJson: true });
+        const info = await ytdl.getInfo();
         infor = info;
         videosize = info.filesize / 1000000;
 
         if (videosize < TeleMaxData) {
             ctx.reply('Download Started');
+
+            // Download the video
+            await ytdl.download();
 
             // Send the video
             await ctx.replyWithVideo({

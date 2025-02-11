@@ -1,7 +1,7 @@
 // Modules
 const Telegraf = require('telegraf');
 const fs = require('fs');
-const ytdlp = require('yt-dlp-core').YtDlp;
+const ytdl = require('ytdl-core');
 const winston = require('winston');
 require('dotenv').config(); // Load environment variables from .env
 
@@ -59,39 +59,38 @@ bot.command('/video', async (ctx) => {
         // Temporary file path
         const tempFilePath = `${__dirname}/${userID}_temp.mp4`;
 
-        // Download video using yt-dlp-core
-        const ytdl = new ytdlp(videoURL, {
-            output: tempFilePath,
-            format: 'mp4',
-        });
-
         // Get video info
-        const info = await ytdl.getInfo();
-        infor = info;
-        videosize = info.filesize / 1000000;
+        const info = await ytdl.getInfo(videoURL);
+        infor = info.videoDetails;
+        videosize = (info.formats.find((f) => f.hasAudio && f.hasVideo).contentLength / 1000000).toFixed(2);
 
         if (videosize < TeleMaxData) {
             ctx.reply('Download Started');
 
             // Download the video
-            await ytdl.download();
+            const videoStream = ytdl(videoURL, { quality: 'highest', filter: 'audioandvideo' });
+            const writeStream = fs.createWriteStream(tempFilePath);
 
-            // Send the video
-            await ctx.replyWithVideo({
-                source: fs.createReadStream(tempFilePath)
+            videoStream.pipe(writeStream);
+
+            writeStream.on('finish', async () => {
+                // Send the video
+                await ctx.replyWithVideo({
+                    source: fs.createReadStream(tempFilePath)
+                });
+
+                // Delete the video immediately after sending
+                fs.unlink(tempFilePath, (err) => {
+                    if (err) {
+                        logger.log('info', `Error deleting file: ${err}`);
+                    } else {
+                        logger.log('info', `File deleted: ${tempFilePath}`);
+                    }
+                });
+
+                ctx.reply(`Download completed!\nVideo sent! \n \n Title: \n ${infor.title}. It's ${videosize}mb big.`);
+                logger.log('info', `Video sent! \n Title: ${infor.title}, Size: ${videosize}`);
             });
-
-            // Delete the video immediately after sending
-            fs.unlink(tempFilePath, (err) => {
-                if (err) {
-                    logger.log('info', `Error deleting file: ${err}`);
-                } else {
-                    logger.log('info', `File deleted: ${tempFilePath}`);
-                }
-            });
-
-            ctx.reply(`Download completed!\nVideo sent! \n \n Title: \n ${infor.title}. It's ${videosize}mb big.`);
-            logger.log('info', `Video sent! \n Title: ${infor.title}, Size: ${videosize}`);
         } else {
             ctx.reply(`The video is ${videosize}mb. The maximum size for sending videos from Telegram is ${TeleMaxData}mb.`);
             logger.log('info', `The video size is too big! (${videosize}mb)`);

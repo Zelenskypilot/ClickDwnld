@@ -29,10 +29,10 @@ const userRateLimits = {};
 // Command to start the bot
 bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
-    bot.sendMessage(chatId, 'Welcome! Send me a YouTube URL or playlist to download videos or audio.');
+    bot.sendMessage(chatId, 'Welcome! Send me a YouTube URL to download videos or audio.');
 });
 
-// Handle YouTube URL or playlist
+// Handle YouTube URL
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
@@ -46,7 +46,7 @@ bot.on('message', async (msg) => {
 
     if (ytdl.validateURL(text)) {
         try {
-            const info = await ytdl.getInfo(text); // Get video info using ytdl-core
+            const info = await ytdl.getInfo(text); // Fetch video info
             userStates[chatId] = { info, url: text };
 
             // Send video details and thumbnail
@@ -60,39 +60,17 @@ bot.on('message', async (msg) => {
                     inline_keyboard: [
                         [
                             { text: '🎥 Download Video', callback_data: 'video' },
-                            { text: '🎵 Download Audio', callback_data: 'audio' },
-                            { text: '📝 Download Subtitles', callback_data: 'subtitles' }
+                            { text: '🎵 Download Audio', callback_data: 'audio' }
                         ]
                     ]
                 }
             });
         } catch (err) {
-            bot.sendMessage(chatId, 'Error fetching video info. Please try again.');
             console.error('Error fetching video info:', err);
-        }
-    } else if (text.startsWith('https://www.youtube.com/playlist?list=')) {
-        // Handle playlist
-        try {
-            const playlistId = new URL(text).searchParams.get('list');
-            const playlistInfo = await ytdl.getBasicInfo(text); // Get basic playlist info
-            userStates[chatId] = { playlistInfo, url: text };
-
-            bot.sendMessage(chatId, `Playlist: ${playlistInfo.videoDetails.title}\nTotal videos: ${playlistInfo.related_videos.length}`, {
-                reply_markup: {
-                    inline_keyboard: [
-                        [
-                            { text: '🎥 Download All Videos', callback_data: 'playlist_video' },
-                            { text: '🎵 Download All Audio', callback_data: 'playlist_audio' }
-                        ]
-                    ]
-                }
-            });
-        } catch (err) {
-            bot.sendMessage(chatId, 'Error fetching playlist info. Please try again.');
-            console.error('Error fetching playlist info:', err);
+            bot.sendMessage(chatId, 'Error fetching video info. Please try again.');
         }
     } else if (text !== '/start') {
-        bot.sendMessage(chatId, 'Invalid YouTube URL or playlist. Please send a valid URL.');
+        bot.sendMessage(chatId, 'Invalid YouTube URL. Please send a valid URL.');
     }
 });
 
@@ -100,7 +78,7 @@ bot.on('message', async (msg) => {
 bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
     const data = query.data;
-    const { info, url, playlistInfo } = userStates[chatId];
+    const { info, url } = userStates[chatId];
 
     if (data === 'video') {
         // Download video
@@ -111,7 +89,7 @@ bot.on('callback_query', async (query) => {
 
         const progressMessage = await bot.sendMessage(chatId, 'Download progress: 0%');
 
-        ytdl(url, { quality: 'highest' })
+        const videoStream = ytdl(url, { quality: 'highest' })
             .on('progress', (chunkLength, downloaded, total) => {
                 const percent = ((downloaded / total) * 100).toFixed(2);
                 bot.editMessageText(`Download progress: ${percent}%`, {
@@ -119,7 +97,12 @@ bot.on('callback_query', async (query) => {
                     message_id: progressMessage.message_id
                 });
             })
-            .pipe(fs.createWriteStream(outputFilePath))
+            .on('error', (err) => {
+                console.error('Error downloading video:', err);
+                bot.sendMessage(chatId, 'Error downloading video. Please try again.');
+            });
+
+        videoStream.pipe(fs.createWriteStream(outputFilePath))
             .on('finish', () => {
                 bot.sendVideo(chatId, outputFilePath)
                     .then(() => {
@@ -129,10 +112,6 @@ bot.on('callback_query', async (query) => {
                         console.error('Error sending video:', err);
                         bot.sendMessage(chatId, 'Error sending video. Please try again.');
                     });
-            })
-            .on('error', (err) => {
-                console.error('Error downloading video:', err);
-                bot.sendMessage(chatId, 'Error downloading video. Please try again.');
             });
     } else if (data === 'audio') {
         // Extract audio
@@ -141,8 +120,13 @@ bot.on('callback_query', async (query) => {
 
         bot.sendMessage(chatId, `Downloading audio for "${title}"...`);
 
-        ytdl(url, { filter: 'audioonly', quality: 'highestaudio' })
-            .pipe(fs.createWriteStream(outputFilePath))
+        const audioStream = ytdl(url, { filter: 'audioonly', quality: 'highestaudio' })
+            .on('error', (err) => {
+                console.error('Error downloading audio:', err);
+                bot.sendMessage(chatId, 'Error downloading audio. Please try again.');
+            });
+
+        audioStream.pipe(fs.createWriteStream(outputFilePath))
             .on('finish', () => {
                 bot.sendAudio(chatId, outputFilePath)
                     .then(() => {
@@ -152,53 +136,7 @@ bot.on('callback_query', async (query) => {
                         console.error('Error sending audio:', err);
                         bot.sendMessage(chatId, 'Error sending audio. Please try again.');
                     });
-            })
-            .on('error', (err) => {
-                console.error('Error downloading audio:', err);
-                bot.sendMessage(chatId, 'Error downloading audio. Please try again.');
             });
-    } else if (data === 'subtitles') {
-        // Download subtitles (not natively supported by ytdl-core)
-        bot.sendMessage(chatId, 'Subtitle download is not supported with ytdl-core. Please use yt-dlp for this feature.');
-    } else if (data === 'playlist_video' || data === 'playlist_audio') {
-        // Download entire playlist
-        const isAudio = data === 'playlist_audio';
-        const totalVideos = playlistInfo.related_videos.length;
-
-        bot.sendMessage(chatId, `Downloading ${totalVideos} ${isAudio ? 'audio files' : 'videos'}...`);
-
-        for (let i = 0; i < totalVideos; i++) {
-            const video = playlistInfo.related_videos[i];
-            const videoUrl = `https://www.youtube.com/watch?v=${video.id}`;
-            const title = video.title.replace(/[^a-zA-Z0-9]/g, '_');
-            const outputFilePath = path.join(downloadDir, `${title}.${isAudio ? 'mp3' : 'mp4'}`);
-
-            if (isAudio) {
-                ytdl(videoUrl, { filter: 'audioonly', quality: 'highestaudio' })
-                    .pipe(fs.createWriteStream(outputFilePath))
-                    .on('finish', () => {
-                        bot.sendAudio(chatId, outputFilePath)
-                            .then(() => {
-                                fs.unlinkSync(outputFilePath); // Delete the file after sending
-                            })
-                            .catch(err => {
-                                console.error('Error sending audio:', err);
-                            });
-                    });
-            } else {
-                ytdl(videoUrl, { quality: 'highest' })
-                    .pipe(fs.createWriteStream(outputFilePath))
-                    .on('finish', () => {
-                        bot.sendVideo(chatId, outputFilePath)
-                            .then(() => {
-                                fs.unlinkSync(outputFilePath); // Delete the file after sending
-                            })
-                            .catch(err => {
-                                console.error('Error sending video:', err);
-                            });
-                    });
-            }
-        }
     }
 });
 

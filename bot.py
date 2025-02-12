@@ -1,168 +1,154 @@
 import os
 import yt_dlp
-import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler, InlineQueryHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from dotenv import load_dotenv
+import asyncio
 
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
+
+# Get the bot token from the environment variable
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 
+# Bot name
 BOT_NAME = "ClickYoutube"
-DOWNLOAD_DIR = 'downloads'
 
-# Ensure the download directory exists
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+# Supported platforms
+SUPPORTED_PLATFORMS = ["youtube", "instagram", "tiktok", "facebook", "twitter"]
 
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# Inline search command (allows users to search for videos within Telegram)
-async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.inline_query.query
-    if not query:
-        return
-
-    search_url = f"ytsearch5:{query}"
-    with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-        results = ydl.extract_info(search_url, download=False)
-
-    videos = results.get('entries', [])
-    articles = []
-    
-    for video in videos:
-        video_id = video['id']
-        title = video['title']
-        thumbnail = video['thumbnail']
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        
-        articles.append({
-            "type": "article",
-            "id": video_id,
-            "title": title,
-            "description": "Click to download this video",
-            "thumb_url": thumbnail,
-            "input_message_content": {
-                "message_text": f"🎥 *{title}*\n🔗 [Watch Here]({url})\n\nClick the button below to download.",
-                "parse_mode": "Markdown"
-            },
-            "reply_markup": InlineKeyboardMarkup([[InlineKeyboardButton("📥 Download", callback_data=f"download:{url}")]])
-        })
-
-    await update.inline_query.answer(articles)
-
-# Start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.message.from_user.first_name
     welcome_message = (
-        f"👋 *Welcome, {user_name}!* I'm *{BOT_NAME}*, your ultimate YouTube video downloader bot. 🚀\n\n"
-        "📽️ With me, you can easily download videos and audio from *YouTube* and other supported platforms. "
-        "Just send me a link, and I'll take care of the rest! 🎉\n\n"
-        "🔍 *Here's how to use me:*\n"
-        "1. Send a YouTube or other supported platform link.\n"
-        "2. Choose the video quality or download MP3.\n"
-        "3. Download the video or audio file directly to your device.\n\n"
-        "📍 *Supported Platforms:*\n"
-        "- YouTube\n"
-        "- Instagram\n"
-        "- TikTok\n"
-        "- Facebook\n"
-        "- Twitter\n\n"
-        "🛠️ Use /help to see all available commands.\n\n"
-        "Let's get started! Send me a link or use the inline search to find videos. 😊"
+        f"👋 Welcome, {user_name}! I'm {BOT_NAME}, your multi-platform video downloader bot.\n\n"
+        "📽️ Send me a link from YouTube, Instagram, TikTok, Facebook, or Twitter, and I'll download the content for you.\n"
+        "🛠️ Use /help to see all available commands."
     )
-    await update.message.reply_text(welcome_message, parse_mode="Markdown")
+    await update.message.reply_text(welcome_message)
 
-# Help command
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_message = (
-        f"🤖 *{BOT_NAME} Help*\n\n"
-        "📌 *Available Commands:*\n"
-        "/start - Start the bot.\n"
+        f"🤖 {BOT_NAME} Help\n\n"
+        "📌 Available Commands:\n"
+        "/start - Start the bot and get a welcome message.\n"
         "/help - Show this help message.\n\n"
-        "📥 *How to Use:*\n"
-        "1. Send a YouTube or other supported platform link.\n"
-        "2. Choose the video quality or download MP3.\n"
-        "3. Download the video or audio file.\n\n"
-        "📍 *Supported Platforms:*\n"
-        "- YouTube\n"
-        "- Instagram\n"
-        "- TikTok\n"
-        "- Facebook\n"
-        "- Twitter\n\n"
-        "🔍 *Inline Search:*\n"
-        "Use `@ClickYoutubeBot <query>` to search for videos directly within Telegram.\n\n"
-        "If you encounter any issues, feel free to report them. Happy downloading! 🎉"
+        "📥 How to Use:\n"
+        "1. Send a link from YouTube, Instagram, TikTok, Facebook, or Twitter.\n"
+        "2. I'll download the content and send it to you.\n"
+        "3. Use the inline buttons to select video quality or download audio-only.\n"
+        "4. Use inline search with `@ClickYoutubeBot <search query>` to find YouTube videos."
     )
-    await update.message.reply_text(help_message, parse_mode="Markdown")
+    await update.message.reply_text(help_message)
 
-# Handle received links
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text
-    buttons = [
-        [InlineKeyboardButton("🔽 144p", callback_data=f"quality:{url}:144p"),
-         InlineKeyboardButton("🔽 360p", callback_data=f"quality:{url}:360p")],
-        [InlineKeyboardButton("🔽 720p", callback_data=f"quality:{url}:720p"),
-         InlineKeyboardButton("🔽 1080p", callback_data=f"quality:{url}:1080p")],
-        [InlineKeyboardButton("🎵 Audio Only (MP3)", callback_data=f"quality:{url}:mp3")]
-    ]
-    
+    download_directory = 'downloads'
+
+    if not os.path.exists(download_directory):
+        os.makedirs(download_directory)
+
+    # Check if the platform is supported
+    platform = None
+    for p in SUPPORTED_PLATFORMS:
+        if p in url:
+            platform = p
+            break
+
+    if not platform:
+        await update.message.reply_text("❌ Unsupported platform. Please provide a valid link from YouTube, Instagram, TikTok, Facebook, or Twitter.")
+        return
+
+    # Send a progress message
+    progress_message = await update.message.reply_text('⏳ Fetching video info... Please wait.')
+
     try:
-        with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+        ydl_opts = {
+            'outtmpl': f'{download_directory}/%(title)s.%(ext)s',
+            'format': 'best',
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-            title = info.get('title', 'Unknown Title')
-            thumbnail = info.get('thumbnail')
+            video_title = info.get('title', 'video')
+            thumbnail = info.get('thumbnail', None)
+            formats = info.get('formats', [])
 
-        await update.message.reply_photo(
-            photo=thumbnail,
-            caption=f"🎥 *{title}*\n\nSelect the download format:",
-            reply_markup=InlineKeyboardMarkup(buttons),
-            parse_mode="Markdown"
-        )
+        # Send thumbnail preview
+        if thumbnail:
+            await context.bot.send_photo(chat_id=update.message.chat_id, photo=thumbnail, caption=f"🎥 {video_title}")
+
+        # Create quality selection buttons
+        quality_buttons = []
+        for f in formats:
+            if f.get('height'):
+                quality_buttons.append(InlineKeyboardButton(f"{f['height']}p", callback_data=f"quality_{f['format_id']}_{url}"))
+
+        audio_button = [InlineKeyboardButton("🎵 Download Audio (MP3)", callback_data=f"audio_{url}")]
+        keyboard = [quality_buttons[i:i + 3] for i in range(0, len(quality_buttons), 3)] + [audio_button]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await context.bot.edit_message_text(chat_id=update.message.chat_id, message_id=progress_message.message_id, text='✅ Select a quality or download audio:')
+        await update.message.reply_text("Choose an option:", reply_markup=reply_markup)
     except Exception as e:
-        logger.error(f"Error extracting info: {e}")
-        await update.message.reply_text("❌ Sorry, I couldn't process this link. Please ensure it's a valid YouTube, Instagram, TikTok, Facebook, or Twitter link.")
+        await update.message.reply_text(f'❌ Error: {e}')
 
-# Download video/audio
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    data = query.data
+    chat_id = query.message.chat_id
+    message_id = query.message.message_id
+
     await query.answer()
 
-    _, url, quality = query.data.split(":")
-    ext = "mp4" if quality != "mp3" else "mp3"
+    if data.startswith("quality_"):
+        format_id, url = data.split("_")[1], "_".join(data.split("_")[2:])
+        await download_video(query, url, format_id)
+    elif data.startswith("audio_"):
+        url = "_".join(data.split("_")[1:])
+        await download_audio(query, url)
+
+async def download_video(query, url, format_id):
+    download_directory = 'downloads'
     ydl_opts = {
-        'format': f'bestvideo[height<={quality}]+bestaudio/best' if quality != "mp3" else 'bestaudio/best',
-        'outtmpl': f'{DOWNLOAD_DIR}/%(title)s.{ext}',
-        'noplaylist': True,
-        'quiet': True
+        'outtmpl': f'{download_directory}/%(title)s.%(ext)s',
+        'format': format_id,
+        'progress_hooks': [lambda d: progress_hook(d, query)],
     }
 
-    progress_msg = await query.message.reply_text('⏳ Downloading... Please wait.')
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        video_file = ydl.prepare_filename(info)
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
+    await query.edit_message_text(text='✅ Download complete!')
+    await query.message.reply_video(video=open(video_file, 'rb'), caption=f"🎥 {info.get('title', 'video')}")
 
-        await context.bot.edit_message_text(
-            chat_id=query.message.chat_id,
-            message_id=progress_msg.message_id,
-            text="✅ Download complete!"
-        )
+async def download_audio(query, url):
+    download_directory = 'downloads'
+    ydl_opts = {
+        'outtmpl': f'{download_directory}/%(title)s.%(ext)s',
+        'format': 'bestaudio/best',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'progress_hooks': [lambda d: progress_hook(d, query)],
+    }
 
-        # Send file
-        if quality == "mp3":
-            await context.bot.send_audio(chat_id=query.message.chat_id, audio=open(filename, 'rb'), title=info.get('title'))
-        else:
-            await context.bot.send_video(chat_id=query.message.chat_id, video=open(filename, 'rb'), caption=f"🎥 {info.get('title')}")
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        audio_file = ydl.prepare_filename(info).replace('.webm', '.mp3').replace('.mp4', '.mp3')
 
-    except Exception as e:
-        logger.error(f"Error downloading: {e}")
-        await query.message.reply_text("❌ Sorry, something went wrong while downloading. Please try again.")
+    await query.edit_message_text(text='✅ Audio download complete!')
+    await query.message.reply_audio(audio=open(audio_file, 'rb'), caption=f"🎵 {info.get('title', 'audio')}")
 
-# Main function
+def progress_hook(d, query):
+    if d['status'] == 'downloading':
+        percent = d.get('_percent_str', '0%')
+        speed = d.get('_speed_str', 'N/A')
+        eta = d.get('_eta_str', 'N/A')
+        asyncio.run(query.edit_message_text(text=f"⏳ Downloading... {percent} done | Speed: {speed} | ETA: {eta}"))
+
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
 
@@ -170,9 +156,6 @@ def main():
     application.add_handler(CommandHandler('help', help_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
-
-    # Add inline search handler
-    application.add_handler(InlineQueryHandler(inline_search))
 
     application.run_polling()
 

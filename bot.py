@@ -41,7 +41,7 @@ def send_welcome(message):
         "- /audio <url> - Download audio only\n"
         "- /custom <url> - Choose a custom format\n\n"
         "Let's get started! Send me a link and I'll do the rest! 🚀\n\n"
-        "_Powered by yt-dlp_"
+        "_Powered by @DevClickBots_"
     )
     bot.reply_to(
         message,
@@ -95,11 +95,20 @@ def download_video(message, url, audio=False, format_id="mp4"):
                         info['requested_downloads'][0]['filepath'], 'rb'), reply_to_message_id=message.message_id)
 
                 else:
-                    width = info['requested_downloads'][0]['width']
-                    height = info['requested_downloads'][0]['height']
+                    # Get video dimensions
+                    width = info['width']
+                    height = info['height']
 
-                    bot.send_video(message.chat.id, open(
-                        info['requested_downloads'][0]['filepath'], 'rb'), reply_to_message_id=message.message_id, width=width, height=height)
+                    # Send video with proper dimensions and Telegram's native player
+                    with open(info['requested_downloads'][0]['filepath'], 'rb') as video_file:
+                        bot.send_video(
+                            chat_id=message.chat.id,
+                            video=video_file,
+                            reply_to_message_id=message.message_id,
+                            width=width,
+                            height=height,
+                            supports_streaming=True  # Ensures the video is playable while downloading
+                        )
                 bot.delete_message(message.chat.id, msg.message_id)
             except Exception as e:
                 bot.edit_message_text(
@@ -115,8 +124,6 @@ def download_video(message, url, audio=False, format_id="mp4"):
     for file in os.listdir('outputs'):
         if file.startswith(str(video_title)):
             os.remove(f'outputs/{file}')
-    else:  # Fixed indentation for the else block
-        bot.reply_to(message, 'Invalid URL')
 
 def log(message, text: str, media: str):
     if os.getenv('LOGS'):

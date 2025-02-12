@@ -1,102 +1,105 @@
-// Modules
-const Telegraf = require('telegraf');
-const fs = require('fs');
-const ytdl = require('ytdl-core');
-const winston = require('winston');
-require('dotenv').config(); // Load environment variables from .env
+const express = require('express');
+const port = 3948;
 
-// Winston Logger Setup
-const logger = winston.createLogger({
-    level: "info",
-    format: winston.format.combine(
-        winston.format.timestamp(),
-        winston.format.printf(info => {
-            return `${info.timestamp} ${info.level}: ${info.message}`;
-        }),
-    ),
-    transports: [
-        new winston.transports.Console(),
-        new winston.transports.File({ filename: 'info.log' })
-    ]
+const app = express();
+
+app.listen(port, () => {
+  console.log(`Server started on port ${port}`);
 });
 
-// Global Vars
-const DOWN_URL = "https://www.youtube.com/watch?v=";
-let infor;
-const TeleMaxData = 50; // 50mb || This might change in the future!
-let videosize;
+const TelegramBot = require("node-telegram-bot-api");
+const ytdl = require("ytdl-core");
+const fs = require("fs");
 
-// Bot setup
-const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN); // Load token from .env
-logger.log('info', "Bot is running;; TOKEN: " + process.env.TELEGRAM_BOT_TOKEN);
+require("dotenv").config();
 
-// Bot commands
-bot.start((ctx) => ctx.reply('Hey there!\nI\'m sending Youtube videos to you!'));
-bot.help((ctx) => ctx.reply('Send me a link and I will send you the vid :) \n cmds: \n \n /video {videoID}'));
-bot.startPolling();
+// bot token in env
+const token = process.env.TELEGRAM_BOT_TOKEN;
 
-// Catch all errors from bot
-bot.catch((err) => logger.log('info', err));
+// Create a bot instance
+const bot = new TelegramBot(token, { polling: true });
 
-// Commands
-bot.command('/video', async (ctx) => {
-    try {
-        const userID = ctx.from.id;
-        const input = ctx.message.text;
-        const subText = input.split(" ");
-        let videoURL;
+// Function to download a YouTube video and send it as a video file
+async function downloadVideo(chatId, url) {
+  try {
+    // Get video information and thumbnail URL
+    const videoInfo = await ytdl.getInfo(url);
+    const title = videoInfo.player_response.videoDetails.title;
+    const thumbnailUrl =
+      videoInfo.videoDetails.thumbnails[
+        videoInfo.videoDetails.thumbnails.length - 1
+      ].url;
+    // Send a message to show the download progress
+    const message = await bot.sendMessage(
+      chatId,
+      `*Downloading video:* ${title}`
+    );
 
-        logger.log('info', `-----------NEW_DOWNLOAD_BY_${userID}-----------`);
+    // Create a writable stream to store the video file
+    const writeStream = fs.createWriteStream(`${title}-${chatId}.mp4`);
 
-        if (subText[1].includes("https://youtu.be/")) {
-            const subSplit = subText[1].split(".be/");
-            videoURL = DOWN_URL + subSplit[1];
-        } else {
-            videoURL = DOWN_URL + subText[1];
+    // Start the download and pipe the video data to the writable stream
+    ytdl(url, { filter: "audioandvideo" }).pipe(writeStream);
+
+    // Set up an interval to update the message with the download progress every 5 seconds
+    let progress = 0;
+    const updateInterval = setInterval(() => {
+      progress = writeStream.bytesWritten / (1024 * 1024);
+      bot.editMessageText(
+        `*Downloading video:* ${title} (${progress.toFixed(2)} MB) \u{1F4E6}`,
+        {
+          chat_id: chatId,
+          message_id: message.message_id,
+          parse_mode: "Markdown", // use Markdown formatting
         }
-        logger.log('info', `Youtube video URL: ${videoURL}`);
+      );
+    }, 2000);
 
-        // Temporary file path
-        const tempFilePath = `${__dirname}/${userID}_temp.mp4`;
+    // When the download is complete, send the video and delete the file
+    writeStream.on("finish", () => {
+      clearInterval(updateInterval); // stop updating the message
+      bot
+        .sendVideo(chatId, `${title}-${chatId}.mp4`, {
+          caption: `*Video downloaded:* ${title} "by" @TsuyuOfficial 🏯`,
+          thumb: thumbnailUrl,
+          duration: videoInfo.videoDetails.lengthSeconds,
+          parse_mode: "Markdown",
+        })
 
-        // Get video info
-        const info = await ytdl.getInfo(videoURL);
-        infor = info.videoDetails;
-        videosize = (info.formats.find((f) => f.hasAudio && f.hasVideo).contentLength / 1000000).toFixed(2);
+        .then(() => {
+          fs.unlinkSync(`${title}-${chatId}.mp4`); // delete the file
+        })
+        .catch((error) => {
+          bot.sendMessage(chatId, "Error sending video.");
+          console.error(error);
+        });
+    });
+  } catch (error) {
+    bot.sendMessage(chatId, "Error downloading video.");
+    console.error(error);
+  }
+}
 
-        if (videosize < TeleMaxData) {
-            ctx.reply('Download Started');
+// Listen for the /yt command
+bot.onText(/\/yt/, (msg) => {
+  const chatId = msg.chat.id;
+  const url = msg.text.split(" ")[1];
 
-            // Download the video
-            const videoStream = ytdl(videoURL, { quality: 'highest', filter: 'audioandvideo' });
-            const writeStream = fs.createWriteStream(tempFilePath);
+  if (ytdl.validateURL(url)) {
+    downloadVideo(chatId, url);
+  } else {
+    bot.sendMessage(chatId, "Invalid YouTube URL.");
+  }
+});
 
-            videoStream.pipe(writeStream);
+bot.onText(/\/start/, (msg) => {
+  const chatId = msg.chat.id;
 
-            writeStream.on('finish', async () => {
-                // Send the video
-                await ctx.replyWithVideo({
-                    source: fs.createReadStream(tempFilePath)
-                });
+  // Send a message with the introduction and instructions
+  bot.sendMessage(
+    chatId,
+    `Hey, I am TsuyuDL made by @TsuyuOfficial. Use the following commands to use me! 
 
-                // Delete the video immediately after sending
-                fs.unlink(tempFilePath, (err) => {
-                    if (err) {
-                        logger.log('info', `Error deleting file: ${err}`);
-                    } else {
-                        logger.log('info', `File deleted: ${tempFilePath}`);
-                    }
-                });
-
-                ctx.reply(`Download completed!\nVideo sent! \n \n Title: \n ${infor.title}. It's ${videosize}mb big.`);
-                logger.log('info', `Video sent! \n Title: ${infor.title}, Size: ${videosize}`);
-            });
-        } else {
-            ctx.reply(`The video is ${videosize}mb. The maximum size for sending videos from Telegram is ${TeleMaxData}mb.`);
-            logger.log('info', `The video size is too big! (${videosize}mb)`);
-        }
-    } catch (err) {
-        ctx.reply("ERROR");
-        logger.log("info", `Error: ${err}`);
-    }
+/yt - Give any youtube link and TsuyuDL will download it for you.`
+  );
 });

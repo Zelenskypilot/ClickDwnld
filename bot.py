@@ -32,7 +32,7 @@ def youtube_url_validation(url):
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     welcome_message = (
-        f"👋 Hello *{message.from_user.first_name}*! Welcome to *ClickYoutube*! �\n\n"
+        f"👋 Hello *{message.from_user.first_name}*! Welcome to *ClickYoutube*! 🎉\n\n"
         "I'm here to make your video downloading experience super easy and fun! 🎥\n\n"
         "Just send me a video link from YouTube, Twitter, TikTok, Reddit, or other supported platforms, "
         "and I'll download it for you in no time! ⏱️\n\n"
@@ -43,21 +43,12 @@ def send_welcome(message):
         "Let's get started! Send me a link and I'll do the rest! 🚀\n\n"
         "_Powered by @DevClickBots_"
     )
-    try:
-        bot.reply_to(
-            message,
-            welcome_message,
-            parse_mode="Markdown",  # Ensure proper Markdown formatting
-            disable_web_page_preview=True
-        )
-    except telebot.apihelper.ApiTelegramException as e:
-        print(f"Error sending welcome message: {e}")
-        bot.reply_to(
-            message,
-            "👋 Hello! Welcome to ClickYoutube! 🎉\n\nSend me a video link to get started!",
-            parse_mode=None,  # Fallback to plain text
-            disable_web_page_preview=True
-        )
+    bot.reply_to(
+        message,
+        welcome_message,
+        parse_mode="MARKDOWN",
+        disable_web_page_preview=True
+    )
 
 def download_video(message, url, audio=False, format_id="mp4"):
     url_info = urlparse(url)
@@ -84,24 +75,25 @@ def download_video(message, url, audio=False, format_id="mp4"):
                         chat_id=message.chat.id, message_id=msg.message_id, text=f"Downloading {d['info_dict']['title']}\n\n{perc}%")
                     last_edited[f"{message.chat.id}-{msg.message_id}"] = datetime.datetime.now()
             except Exception as e:
-                print(f"Error updating progress: {e}")
+                print(e)
 
     msg = bot.reply_to(message, 'Downloading...')
     video_title = round(time.time() * 1000)
 
-    try:
-        with yt_dlp.YoutubeDL({'format': format_id, 'outtmpl': f'outputs/{video_title}.%(ext)s', 'progress_hooks': [progress], 'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-        }] if audio else [], 'max_filesize': int(os.getenv('MAX_FILESIZE', 50000000))}) as ydl:
-            info = ydl.extract_info(url, download=True)
+    with yt_dlp.YoutubeDL({'format': format_id, 'outtmpl': f'outputs/{video_title}.%(ext)s', 'progress_hooks': [progress], 'postprocessors': [{
+        'key': 'FFmpegExtractAudio',
+        'preferredcodec': 'mp3',
+    }] if audio else [], 'max_filesize': int(os.getenv('MAX_FILESIZE', 50000000))}) as ydl:
+        info = ydl.extract_info(url, download=True)
 
+        try:
+            bot.edit_message_text(
+                chat_id=message.chat.id, message_id=msg.message_id, text='Sending file to Telegram...')
             try:
-                bot.edit_message_text(
-                    chat_id=message.chat.id, message_id=msg.message_id, text='Sending file to Telegram...')
                 if audio:
                     bot.send_audio(message.chat.id, open(
                         info['requested_downloads'][0]['filepath'], 'rb'), reply_to_message_id=message.message_id)
+
                 else:
                     # Get video dimensions
                     width = info['width']
@@ -120,15 +112,15 @@ def download_video(message, url, audio=False, format_id="mp4"):
                 bot.delete_message(message.chat.id, msg.message_id)
             except Exception as e:
                 bot.edit_message_text(
-                    chat_id=message.chat.id, message_id=msg.message_id, text=f"Couldn't send file, make sure it's supported by Telegram and it doesn't exceed *{round(int(os.getenv('MAX_FILESIZE', 50000000)) / 1000000)}MB*", parse_mode="Markdown")
-    except yt_dlp.utils.DownloadError as e:
-        bot.edit_message_text(
-            chat_id=message.chat.id, message_id=msg.message_id, text="Invalid URL or video unavailable.")
-    except Exception as e:
-        bot.edit_message_text(
-            chat_id=message.chat.id, message_id=msg.message_id, text=f"There was an error downloading your video: {e}")
+                    chat_id=message.chat.id, message_id=msg.message_id, text=f"Couldn't send file, make sure it's supported by Telegram and it doesn't exceed *{round(int(os.getenv('MAX_FILESIZE', 50000000)) / 1000000)}MB*", parse_mode="MARKDOWN")
 
-    # Clean up downloaded files
+        except Exception as e:
+            if isinstance(e, yt_dlp.utils.DownloadError):
+                bot.edit_message_text(
+                    'Invalid URL', message.chat.id, msg.message_id)
+            else:
+                bot.edit_message_text(
+                    f"There was an error downloading your video, make sure it doesn't exceed *{round(int(os.getenv('MAX_FILESIZE', 50000000)) / 1000000)}MB*", message.chat.id, msg.message_id, parse_mode="MARKDOWN")
     for file in os.listdir('outputs'):
         if file.startswith(str(video_title)):
             os.remove(f'outputs/{file}')
@@ -157,7 +149,7 @@ def download_command(message):
     text = get_text(message)
     if not text:
         bot.reply_to(
-            message, 'Invalid usage, use /download url', parse_mode="Markdown")
+            message, 'Invalid usage, use /download url', parse_mode="MARKDOWN")
         return
 
     log(message, text, 'video')
@@ -168,7 +160,7 @@ def download_audio_command(message):
     text = get_text(message)
     if not text:
         bot.reply_to(
-            message, 'Invalid usage, use /audio url', parse_mode="Markdown")
+            message, 'Invalid usage, use /audio url', parse_mode="MARKDOWN")
         return
 
     log(message, text, 'audio')
@@ -179,7 +171,7 @@ def custom(message):
     text = get_text(message)
     if not text:
         bot.reply_to(
-            message, 'Invalid usage, use /custom url', parse_mode="Markdown")
+            message, 'Invalid usage, use /custom url', parse_mode="MARKDOWN")
         return
 
     msg = bot.reply_to(message, 'Getting formats...')

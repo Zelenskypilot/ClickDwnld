@@ -1,174 +1,151 @@
 import os
 import yt_dlp
-import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler, InlineQueryHandler
-from dotenv import load_dotenv
 import asyncio
-import requests
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 
-# Bot name
 BOT_NAME = "ClickYoutube"
+DOWNLOAD_DIR = 'downloads'
 
-# Logging setup
-logging.basicConfig(level=logging.INFO)
+# Ensure the download directory exists
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+# Inline search command (allows users to search for videos within Telegram)
+async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.inline_query.query
+    if not query:
+        return
+
+    search_url = f"ytsearch5:{query}"
+    with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+        results = ydl.extract_info(search_url, download=False)
+
+    videos = results.get('entries', [])
+    articles = []
+    
+    for video in videos:
+        video_id = video['id']
+        title = video['title']
+        thumbnail = video['thumbnail']
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        
+        articles.append({
+            "type": "article",
+            "id": video_id,
+            "title": title,
+            "description": "Click to download this video",
+            "thumb_url": thumbnail,
+            "input_message_content": {
+                "message_text": f"🎥 *{title}*\n🔗 [Watch Here]({url})\n\nClick the button below to download.",
+                "parse_mode": "Markdown"
+            },
+            "reply_markup": InlineKeyboardMarkup([[InlineKeyboardButton("📥 Download", callback_data=f"download:{url}")]])
+        })
+
+    await update.inline_query.answer(articles)
+
+# Start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send a welcome message."""
     user_name = update.message.from_user.first_name
-    welcome_message = (
+    await update.message.reply_text(
         f"👋 Welcome, {user_name}! I'm {BOT_NAME}, your YouTube video downloader bot.\n\n"
-        "📽️ Send me a YouTube link, and I'll download the video for you.\n"
-        "🎵 You can also download audio-only (MP3).\n"
-        "📺 Now supporting Instagram, TikTok, Facebook, and Twitter videos too!\n\n"
+        "📽️ Send a YouTube link to get started.\n"
+        "🔍 Use inline search: `@ClickYoutubeBot <query>` to find videos.\n"
         "🛠️ Use /help to see all available commands."
     )
-    await update.message.reply_text(welcome_message)
 
+# Help command
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send a help message."""
-    help_message = (
+    await update.message.reply_text(
         f"🤖 {BOT_NAME} Help\n\n"
         "📌 Available Commands:\n"
-        "/start - Start the bot and get a welcome message.\n"
-        "/help - Show this help message.\n"
-        "/audio <link> - Download audio-only (MP3).\n"
-        "/quality <link> - Select video quality before downloading.\n\n"
+        "/start - Start the bot.\n"
+        "/help - Show help message.\n\n"
         "📥 How to Use:\n"
-        "1. Send a YouTube, Instagram, TikTok, Facebook, or Twitter video link.\n"
-        "2. Select quality or audio option.\n"
-        "3. I'll download the video and send it to you."
+        "1. Send a YouTube or other supported platform link.\n"
+        "2. Choose the video quality or download MP3.\n"
+        "3. Download the video or audio file.\n\n"
+        "📍 Supported Platforms: YouTube, Instagram, TikTok, Facebook, Twitter."
     )
-    await update.message.reply_text(help_message)
 
-def get_video_formats(url):
-    """Fetch available video formats."""
-    with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-        info = ydl.extract_info(url, download=False)
-        formats = info.get('formats', [])
-        video_formats = [
-            (f"{fmt['format_note']} ({fmt['ext']})", fmt['format_id'])
-            for fmt in formats if fmt.get('vcodec') != 'none'  # Filter only video formats
-        ]
-        thumbnail_url = info.get('thumbnail', None)
-        title = info.get('title', 'Unknown Title')
-    return video_formats, thumbnail_url, title
-
-async def download_video(update: Update, context: ContextTypes.DEFAULT_TYPE, url, format_id):
-    """Download the selected video format."""
-    download_directory = 'downloads'
-    if not os.path.exists(download_directory):
-        os.makedirs(download_directory)
-
-    ydl_opts = {
-        'outtmpl': f'{download_directory}/%(title)s.%(ext)s',
-        'format': format_id,
-    }
-
-    try:
-        progress_message = await update.message.reply_text('⏳ Downloading video... Please wait.')
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            video_title = info.get('title', 'video')
-            video_file = ydl.prepare_filename(info)
-
-        await context.bot.edit_message_text(chat_id=update.message.chat_id, message_id=progress_message.message_id, text='✅ Download complete!')
-
-        keyboard = [[InlineKeyboardButton("📥 Download Video", callback_data=video_file)]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        await update.message.reply_video(video=open(video_file, 'rb'), caption=f"🎥 {video_title}", reply_markup=reply_markup)
-    except Exception as e:
-        await update.message.reply_text(f'❌ Error: {e}')
-
-async def quality_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send available video quality options."""
-    url = context.args[0] if context.args else None
-    if not url:
-        await update.message.reply_text("❌ Please provide a video link. Example: `/quality <link>`")
-        return
-
-    formats, thumbnail_url, title = get_video_formats(url)
-
-    keyboard = [[InlineKeyboardButton(f"{quality} 📺", callback_data=f"{url}|{format_id}")] for quality, format_id in formats]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    if thumbnail_url:
-        await update.message.reply_photo(photo=thumbnail_url, caption=f"🎥 **{title}**\nSelect a quality to download:", reply_markup=reply_markup)
-    else:
-        await update.message.reply_text(f"🎥 **{title}**\nSelect a quality to download:", reply_markup=reply_markup)
-
-async def audio_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Download audio-only (MP3)."""
-    url = context.args[0] if context.args else None
-    if not url:
-        await update.message.reply_text("❌ Please provide a video link. Example: `/audio <link>`")
-        return
-
-    download_directory = 'downloads'
-    if not os.path.exists(download_directory):
-        os.makedirs(download_directory)
-
-    ydl_opts = {
-        'format': 'bestaudio',
-        'outtmpl': f'{download_directory}/%(title)s.%(ext)s',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-    }
-
-    try:
-        progress_message = await update.message.reply_text('🎵 Downloading audio... Please wait.')
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            audio_title = info.get('title', 'audio')
-            audio_file = ydl.prepare_filename(info).replace('.webm', '.mp3').replace('.m4a', '.mp3')
-
-        await context.bot.edit_message_text(chat_id=update.message.chat_id, message_id=progress_message.message_id, text='✅ Audio download complete!')
-
-        await update.message.reply_audio(audio=open(audio_file, 'rb'), caption=f"🎶 {audio_title}")
-    except Exception as e:
-        await update.message.reply_text(f'❌ Error: {e}')
-
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle inline button clicks for quality selection."""
-    query = update.callback_query
-    url, format_id = query.data.split("|")
-
-    await query.answer()
-    await download_video(update, context, url, format_id)
-
+# Handle received links
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle direct video links from users."""
     url = update.message.text
-    formats, thumbnail_url, title = get_video_formats(url)
+    buttons = [
+        [InlineKeyboardButton("🔽 144p", callback_data=f"quality:{url}:144p"),
+         InlineKeyboardButton("🔽 360p", callback_data=f"quality:{url}:360p")],
+        [InlineKeyboardButton("🔽 720p", callback_data=f"quality:{url}:720p"),
+         InlineKeyboardButton("🔽 1080p", callback_data=f"quality:{url}:1080p")],
+        [InlineKeyboardButton("🎵 Audio Only (MP3)", callback_data=f"quality:{url}:mp3")]
+    ]
+    
+    try:
+        with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+            info = ydl.extract_info(url, download=False)
+            title = info.get('title', 'Unknown Title')
+            thumbnail = info.get('thumbnail')
 
-    keyboard = [[InlineKeyboardButton(f"{quality} 📺", callback_data=f"{url}|{format_id}")] for quality, format_id in formats]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_photo(
+            photo=thumbnail,
+            caption=f"🎥 *{title}*\n\nSelect the download format:",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
 
-    if thumbnail_url:
-        await update.message.reply_photo(photo=thumbnail_url, caption=f"🎥 **{title}**\nSelect a quality to download:", reply_markup=reply_markup)
-    else:
-        await update.message.reply_text(f"🎥 **{title}**\nSelect a quality to download:", reply_markup=reply_markup)
+# Download video/audio
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
+    _, url, quality = query.data.split(":")
+    ext = "mp4" if quality != "mp3" else "mp3"
+    ydl_opts = {
+        'format': f'bestvideo[height={quality}]+bestaudio/best' if quality != "mp3" else 'bestaudio',
+        'outtmpl': f'{DOWNLOAD_DIR}/%(title)s.{ext}',
+        'noplaylist': True,
+        'quiet': True
+    }
+
+    progress_msg = await query.message.reply_text('⏳ Downloading... Please wait.')
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+
+        await context.bot.edit_message_text(
+            chat_id=query.message.chat_id,
+            message_id=progress_msg.message_id,
+            text="✅ Download complete!"
+        )
+
+        # Send file
+        if quality == "mp3":
+            await context.bot.send_audio(chat_id=query.message.chat_id, audio=open(filename, 'rb'), title=info.get('title'))
+        else:
+            await context.bot.send_video(chat_id=query.message.chat_id, video=open(filename, 'rb'), caption=f"🎥 {info.get('title')}")
+
+    except Exception as e:
+        await query.message.reply_text(f"❌ Error: {e}")
+
+# Main function
 def main():
-    """Start the bot."""
     application = Application.builder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('help', help_command))
-    application.add_handler(CommandHandler('quality', quality_selection))
-    application.add_handler(CommandHandler('audio', audio_download))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
+
+    # Add inline search handler
+    application.add_inline_handler(inline_search)
 
     application.run_polling()
 

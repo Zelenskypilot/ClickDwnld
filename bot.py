@@ -51,6 +51,29 @@ def send_welcome(message):
         disable_web_page_preview=True
     )
 
+def compress_video(input_path, output_path, target_size_mb=50):
+    target_size_bytes = target_size_mb * 1000000  # Convert MB to bytes
+    command = [
+        'ffmpeg', '-i', input_path, '-vf', 'scale=640:-1', '-b:v', '1000k',
+        '-maxrate', '1000k', '-bufsize', '2000k', output_path
+    ]
+    subprocess.run(command)
+
+    # Check if the compressed file is within the size limit
+    if os.path.getsize(output_path) > target_size_bytes:
+        # Further compress if needed
+        command = [
+            'ffmpeg', '-i', input_path, '-vf', 'scale=480:-1', '-b:v', '500k',
+            '-maxrate', '500k', '-bufsize', '1000k', output_path
+        ]
+        subprocess.run(command)
+
+def convert_video(input_path, output_path):
+    command = [
+        'ffmpeg', '-i', input_path, '-c:v', 'libx264', '-c:a', 'aac', output_path
+    ]
+    subprocess.run(command)
+
 def download_video(message, url, audio=False, format_id="mp4"):
     url_info = urlparse(url)
     if url_info.scheme:
@@ -81,10 +104,14 @@ def download_video(message, url, audio=False, format_id="mp4"):
     msg = bot.reply_to(message, 'Downloading...')
     video_title = round(time.time() * 1000)
 
-    with yt_dlp.YoutubeDL({'format': format_id, 'outtmpl': f'outputs/{video_title}.%(ext)s', 'progress_hooks': [progress], 'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-    }] if audio else [], 'max_filesize': int(os.getenv('MAX_FILESIZE', 50000000))}) as ydl:
+    ydl_opts = {
+        'format': 'bestvideo[height<=480]+bestaudio/best[height<=480]',
+        'outtmpl': f'outputs/{video_title}.%(ext)s',
+        'progress_hooks': [progress],
+        'max_filesize': int(os.getenv('MAX_FILESIZE', 50000000))
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
 
         try:
@@ -96,41 +123,31 @@ def download_video(message, url, audio=False, format_id="mp4"):
                         info['requested_downloads'][0]['filepath'], 'rb'), reply_to_message_id=message.message_id)
 
                 else:
-                    # Get video dimensions
-                    width = info['width']
-                    height = info['height']
+                    # Compress the video
+                    compressed_path = f'outputs/{video_title}_compressed.mp4'
+                    compress_video(info['requested_downloads'][0]['filepath'], compressed_path)
 
-                    # Embed thumbnail into the video
-                    thumbnail_path = f'outputs/{video_title}.jpg'
-                    ydl.download([info['thumbnail']])
-                    subprocess.run([
-                        'ffmpeg', '-i', info['requested_downloads'][0]['filepath'], '-i', thumbnail_path,
-                        '-map', '0', '-map', '1', '-c', 'copy', '-disposition:v:1', 'attached_pic',
-                        f'outputs/{video_title}_with_thumbnail.mp4'
-                    ])
+                    # Convert the video to a compatible format
+                    converted_path = f'outputs/{video_title}_converted.mp4'
+                    convert_video(compressed_path, converted_path)
 
-                    # Send video with embedded thumbnail
-                    with open(f'outputs/{video_title}_with_thumbnail.mp4', 'rb') as video_file:
+                    # Send the converted video
+                    with open(converted_path, 'rb') as video_file:
                         bot.send_video(
                             chat_id=message.chat.id,
                             video=video_file,
                             reply_to_message_id=message.message_id,
-                            width=width,
-                            height=height,
-                            supports_streaming=True  # Ensures the video is playable while downloading
+                            supports_streaming=True
                         )
                 bot.delete_message(message.chat.id, msg.message_id)
             except Exception as e:
+                print(f"Error sending file: {e}")
                 bot.edit_message_text(
-                    chat_id=message.chat.id, message_id=msg.message_id, text=f"Couldn't send file, make sure it's supported by Telegram and it doesn't exceed *{round(int(os.getenv('MAX_FILESIZE', 50000000)) / 1000000)}MB*", parse_mode="MARKDOWN")
-
+                    chat_id=message.chat.id, message_id=msg.message_id, text=f"Couldn't send file: {e}")
         except Exception as e:
-            if isinstance(e, yt_dlp.utils.DownloadError):
-                bot.edit_message_text(
-                    'Invalid URL', message.chat.id, msg.message_id)
-            else:
-                bot.edit_message_text(
-                    f"There was an error downloading your video, make sure it doesn't exceed *{round(int(os.getenv('MAX_FILESIZE', 50000000)) / 1000000)}MB*", message.chat.id, msg.message_id, parse_mode="MARKDOWN")
+            print(f"Error downloading video: {e}")
+            bot.edit_message_text(
+                chat_id=message.chat.id, message_id=msg.message_id, text=f"Error downloading video: {e}")
     for file in os.listdir('outputs'):
         if file.startswith(str(video_title)):
             os.remove(f'outputs/{file}')

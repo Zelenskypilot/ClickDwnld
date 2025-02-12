@@ -115,8 +115,8 @@ def download_video(message, url, audio=False, format_id="mp4"):
     for file in os.listdir('outputs'):
         if file.startswith(str(video_title)):
             os.remove(f'outputs/{file}')
-else: 
-    bot.reply_to(message, 'Invalid URL')
+    else:  # Fixed indentation for the else block
+        bot.reply_to(message, 'Invalid URL')
 
 def log(message, text: str, media: str):
     if os.getenv('LOGS'):

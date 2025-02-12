@@ -1,7 +1,7 @@
 import os
 import yt_dlp
-import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler, InlineQueryHandler
 from dotenv import load_dotenv
 
@@ -14,6 +14,10 @@ DOWNLOAD_DIR = 'downloads'
 
 # Ensure the download directory exists
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Inline search command (allows users to search for videos within Telegram)
 async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -52,26 +56,47 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.message.from_user.first_name
-    await update.message.reply_text(
-        f"👋 Welcome, {user_name}! I'm {BOT_NAME}, your YouTube video downloader bot.\n\n"
-        "📽️ Send a YouTube link to get started.\n"
-        "🔍 Use inline search: `@ClickYoutubeBot <query>` to find videos.\n"
-        "🛠️ Use /help to see all available commands."
+    welcome_message = (
+        f"👋 *Welcome, {user_name}!* I'm *{BOT_NAME}*, your ultimate YouTube video downloader bot. 🚀\n\n"
+        "📽️ With me, you can easily download videos and audio from *YouTube* and other supported platforms. "
+        "Just send me a link, and I'll take care of the rest! 🎉\n\n"
+        "🔍 *Here's how to use me:*\n"
+        "1. Send a YouTube or other supported platform link.\n"
+        "2. Choose the video quality or download MP3.\n"
+        "3. Download the video or audio file directly to your device.\n\n"
+        "📍 *Supported Platforms:*\n"
+        "- YouTube\n"
+        "- Instagram\n"
+        "- TikTok\n"
+        "- Facebook\n"
+        "- Twitter\n\n"
+        "🛠️ Use /help to see all available commands.\n\n"
+        "Let's get started! Send me a link or use the inline search to find videos. 😊"
     )
+    await update.message.reply_text(welcome_message, parse_mode="Markdown")
 
 # Help command
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        f"🤖 {BOT_NAME} Help\n\n"
-        "📌 Available Commands:\n"
+    help_message = (
+        f"🤖 *{BOT_NAME} Help*\n\n"
+        "📌 *Available Commands:*\n"
         "/start - Start the bot.\n"
-        "/help - Show help message.\n\n"
-        "📥 How to Use:\n"
+        "/help - Show this help message.\n\n"
+        "📥 *How to Use:*\n"
         "1. Send a YouTube or other supported platform link.\n"
         "2. Choose the video quality or download MP3.\n"
         "3. Download the video or audio file.\n\n"
-        "📍 Supported Platforms: YouTube, Instagram, TikTok, Facebook, Twitter."
+        "📍 *Supported Platforms:*\n"
+        "- YouTube\n"
+        "- Instagram\n"
+        "- TikTok\n"
+        "- Facebook\n"
+        "- Twitter\n\n"
+        "🔍 *Inline Search:*\n"
+        "Use `@ClickYoutubeBot <query>` to search for videos directly within Telegram.\n\n"
+        "If you encounter any issues, feel free to report them. Happy downloading! 🎉"
     )
+    await update.message.reply_text(help_message, parse_mode="Markdown")
 
 # Handle received links
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -97,7 +122,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
     except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
+        logger.error(f"Error extracting info: {e}")
+        await update.message.reply_text("❌ Sorry, I couldn't process this link. Please ensure it's a valid YouTube, Instagram, TikTok, Facebook, or Twitter link.")
 
 # Download video/audio
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -107,7 +133,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, url, quality = query.data.split(":")
     ext = "mp4" if quality != "mp3" else "mp3"
     ydl_opts = {
-        'format': f'bestvideo[height={quality}]+bestaudio/best' if quality != "mp3" else 'bestaudio',
+        'format': f'bestvideo[height<={quality}]+bestaudio/best' if quality != "mp3" else 'bestaudio/best',
         'outtmpl': f'{DOWNLOAD_DIR}/%(title)s.{ext}',
         'noplaylist': True,
         'quiet': True
@@ -133,7 +159,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_video(chat_id=query.message.chat_id, video=open(filename, 'rb'), caption=f"🎥 {info.get('title')}")
 
     except Exception as e:
-        await query.message.reply_text(f"❌ Error: {e}")
+        logger.error(f"Error downloading: {e}")
+        await query.message.reply_text("❌ Sorry, something went wrong while downloading. Please try again.")
 
 # Main function
 def main():

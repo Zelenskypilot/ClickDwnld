@@ -1,19 +1,36 @@
 {
-  "name": "t-youtube-downloader",
+  "name": "telegram_youtube_downloader_nodejs",
   "version": "1.0.0",
-  "description": "",
-  "main": "bot.js",
+  "description": "A Telegram Bot Made In Nodejs ",
+  "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node index.js",
-    "stop": "pkill -f node"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "author": "Niklas <dev@corusm.de>",
+  "keywords": [
+    "telegram",
+    "youtube",
+    "video",
+    "downloader",
+    "telegram",
+    "youtube",
+    "video",
+    "downloader",
+    "nodejs",
+    "telegram",
+    "bot",
+    "youtube",
+    "video",
+    "downloader",
+    "bot",
+    "nodejs"
+  ],
+  "author": "Jexx",
   "license": "ISC",
   "dependencies": {
-    "telegraf": "^3.25.5",
-    "winston": "^3.1.0",
-    "ytdl-core": "^4.11.5",
-    "dotenv": "^16.0.0"
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "fs": "^0.0.1-security",
+    "node-telegram-bot-api": "^0.60.0",
+    "ytdl-core": "^4.11.2"
   }
 }

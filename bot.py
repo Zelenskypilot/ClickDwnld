@@ -8,6 +8,7 @@ from telebot import types
 from telebot.util import quick_markup
 import time
 from dotenv import load_dotenv
+import subprocess
 
 # Load environment variables from .env file
 load_dotenv()
@@ -99,8 +100,17 @@ def download_video(message, url, audio=False, format_id="mp4"):
                     width = info['width']
                     height = info['height']
 
-                    # Send video with proper dimensions and Telegram's native player
-                    with open(info['requested_downloads'][0]['filepath'], 'rb') as video_file:
+                    # Embed thumbnail into the video
+                    thumbnail_path = f'outputs/{video_title}.jpg'
+                    ydl.download([info['thumbnail']])
+                    subprocess.run([
+                        'ffmpeg', '-i', info['requested_downloads'][0]['filepath'], '-i', thumbnail_path,
+                        '-map', '0', '-map', '1', '-c', 'copy', '-disposition:v:1', 'attached_pic',
+                        f'outputs/{video_title}_with_thumbnail.mp4'
+                    ])
+
+                    # Send video with embedded thumbnail
+                    with open(f'outputs/{video_title}_with_thumbnail.mp4', 'rb') as video_file:
                         bot.send_video(
                             chat_id=message.chat.id,
                             video=video_file,

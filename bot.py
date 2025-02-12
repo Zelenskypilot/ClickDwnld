@@ -2,7 +2,7 @@ import os
 import yt_dlp
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler, InlineQueryHandler
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -145,7 +145,7 @@ def main():
     application.add_handler(CallbackQueryHandler(button_callback))
 
     # Add inline search handler
-    application.add_inline_handler(inline_search)
+    application.add_handler(InlineQueryHandler(inline_search))
 
     application.run_polling()
 
